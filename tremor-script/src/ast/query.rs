@@ -55,6 +55,8 @@ pub enum Stmt<'script> {
     Operator(OperatorStmt<'script>),
     /// A script creation
     Script(ScriptStmt<'script>),
+    /// An subquery declaration
+    SubqueryDecl(SubqueryDecl<'script>),
     /// A select statement
     Select(SelectStmt<'script>),
 }
@@ -67,6 +69,7 @@ impl<'script> BaseExpr for Stmt<'script> {
             Stmt::Stream(s) => s.mid(),
             Stmt::OperatorDecl(s) => s.mid(),
             Stmt::ScriptDecl(s) => s.mid(),
+            Stmt::SubqueryDecl(s) => s.mid(),
             Stmt::Operator(s) => s.mid(),
             Stmt::Script(s) => s.mid(),
             Stmt::Select(s) => s.mid(),
@@ -238,6 +241,37 @@ pub struct ScriptStmt<'script> {
     pub module: Vec<String>,
 }
 impl_expr_mid!(ScriptStmt);
+
+/// A subquery declaration
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SubqueryDecl<'script> {
+    pub(crate) mid: usize,
+    /// Module of the subquery
+    pub module: Vec<String>,
+    /// ID of the subquery
+    pub id: String,
+    /// Parameters of a subquery declaration
+    pub params: Option<HashMap<String, Value<'script>>>,
+    /// Input Ports
+    pub from: Vec<Ident<'script>>,
+    /// Output Ports
+    pub into: Vec<Ident<'script>>,
+    /// The raw subquery statements
+    pub raw_stmts: raw::StmtsRaw<'script>,
+}
+impl_expr_mid!(SubqueryDecl);
+
+impl<'script> SubqueryDecl<'script> {
+    /// Calculate the fully qualified name
+    #[must_use]
+    pub fn fqsqn(&self, module: &[String]) -> String {
+        if module.is_empty() {
+            self.id.clone()
+        } else {
+            format!("{}::{}", module.join("::"), self.id)
+        }
+    }
+}
 
 /// we're forced to make this pub because of lalrpop
 #[derive(Clone, Debug, PartialEq, Serialize)]

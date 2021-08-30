@@ -372,7 +372,10 @@ impl Query {
                         outputs.push(id);
                     };
                 }
-                Stmt::WindowDecl(_) | Stmt::ScriptDecl(_) | Stmt::OperatorDecl(_) => {}
+                Stmt::WindowDecl(_)
+                | Stmt::ScriptDecl(_)
+                | Stmt::OperatorDecl(_)
+                | Stmt::SubqueryDecl(_) => {}
                 Stmt::Operator(o) => {
                     if nodes.contains_key(&common_cow(&o.id)) {
                         let error_func = if has_builtin_node_name(&common_cow(&o.id)) {

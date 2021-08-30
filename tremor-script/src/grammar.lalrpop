@@ -78,13 +78,15 @@ ModuleStmts: StmtsRaw<'input> = {
 // In case we need to limit the content of stmt
 ModuleInnerStmt: StmtRaw<'input> = {
     <m:ModuleStmt> => StmtRaw::ModuleStmt(m),
-    <start:@L> "define" <kind:WindowKind> "window" <id:Ident> <params:WithScriptClause> <end:@L> => StmtRaw::WindowDecl(WindowDeclRaw { start, end, id: id.to_string(), kind, params: params.0, script: params.1 }),
+    <doc:DocComment> <start:@L> "define" <kind:WindowKind> "window" <id:Ident> <params:WithScriptClause> <end:@L> => StmtRaw::WindowDecl(WindowDeclRaw { start, end, id: id.to_string(), kind, params: params.0.into(), script: params.1, doc }),
 
-    <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: Some(params) })),
-    <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident>  <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: None })),
+    <doc:DocComment> <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: Some(params).into(), doc })),
+    <doc:DocComment> <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident>  <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: MaybeParams::Raw(None), doc })),
 
-    <start:@L> "define" "script" <id:Ident> <params:ScriptWithClause> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: Some(params) }),
-    <start:@L> "define" "script" <id:Ident> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: None }),
+    <doc:DocComment> <start:@L> "define" "script" <id:Ident> <params:ScriptWithClause> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: Some(params).into(), doc }),
+    <doc:DocComment> <start:@L> "define" "script" <id:Ident> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: MaybeParams::Raw(None), doc }),
+
+    DefineSubquery => <>,
 
     Const => StmtRaw::Expr(Box::new(<>)),
     FnDecl => StmtRaw::Expr(Box::new(ExprRaw::FnDecl(<>))),
@@ -118,27 +120,30 @@ WindowKind: WindowKind = {
 Stmt: StmtRaw<'input> = {
     <m:ModuleStmt> => StmtRaw::ModuleStmt(m),
 
-    <start:@L> "define" <kind:WindowKind> "window" <id:Ident> <params:WithScriptClause> <end:@L> => StmtRaw::WindowDecl(WindowDeclRaw { start, end, id: id.to_string(), kind, params: params.0, script: params.1 }),
+    <doc:DocComment> <start:@L> "define" <kind:WindowKind> "window" <id:Ident> <params:WithScriptClause> <end:@L> => StmtRaw::WindowDecl(WindowDeclRaw { start, end, id: id.to_string(), kind, params: params.0.into(), script: params.1, doc }),
 
-    <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: Some(params) })),
-    <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident>  <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: None })),
+    <doc:DocComment> <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: Some(params).into(), doc })),
+    <doc:DocComment> <start:@L> "define" <kind:OperatorKind> "operator" <id:Ident>  <end:@L> => StmtRaw::OperatorDecl(Box::new(OperatorDeclRaw { start, end, kind, id: id.to_string(), params: MaybeParams::Raw(None), doc })),
 
-    <start:@L> "define" "script" <id:Ident> <params:ScriptWithClause> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: Some(params) }),
-    <start:@L> "define" "script" <id:Ident> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: None }),
+    <doc:DocComment> <start:@L> "define" "script" <id:Ident> <params:ScriptWithClause> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: Some(params).into(), doc }),
+    <doc:DocComment> <start:@L> "define" "script" <id:Ident> <script:EmbeddedScript> <end:@L> => StmtRaw::ScriptDecl(ScriptDeclRaw { start, end, id: id.to_string(), script, params: MaybeParams::Raw(None), doc }),
+
+    DefineSubquery => <>,
+    CreateSubquery => <>,
 
     <start:@L> "create" "stream" <id:Ident> <end:@L> => StmtRaw::Stream(StreamStmtRaw { start, end, id: id.to_string() }),
 
-    <start:@L> "create" "operator" <id:Ident> "from" <target:ModularTarget> <params:WithClause> <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: target.0, target: target.1.id.to_string(), params: Some(params) }),
-    <start:@L> "create" "operator" <id:Ident> "from" <target:ModularTarget>  <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: target.0, target: target.1.id.to_string(), params: None }),
+    <start:@L> "create" "operator" <id:Ident> "from" <target:ModularTarget> <params:WithClause> <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: target.0, target: target.1.id.to_string(), params: Some(params).into() }),
+    <start:@L> "create" "operator" <id:Ident> "from" <target:ModularTarget>  <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: target.0, target: target.1.id.to_string(), params: MaybeParams::Raw(None) }),
 
-    <start:@L> "create" "operator" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: Some(params) }),
-    <start:@L> "create" "operator" <id:Ident> <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: None }),
+    <start:@L> "create" "operator" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: Some(params).into() }),
+    <start:@L> "create" "operator" <id:Ident> <end:@L> => StmtRaw::Operator(OperatorStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: MaybeParams::Raw(None) }),
 
-    <start:@L> "create" "script" <id:Ident> "from" <target:ModularTarget> <params:WithClause> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, module: target.0, id: id.to_string(), target: target.1.id.to_string(), params: Some(params) }),
-    <start:@L> "create" "script" <id:Ident> "from" <target:ModularTarget> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, id: id.to_string(), module: target.0, target: target.1.id.to_string(), params: None }),
+    <start:@L> "create" "script" <id:Ident> "from" <target:ModularTarget> <params:WithClause> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, module: target.0, id: id.to_string(), target: target.1.id.to_string(), params: Some(params).into() }),
+    <start:@L> "create" "script" <id:Ident> "from" <target:ModularTarget> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, id: id.to_string(), module: target.0, target: target.1.id.to_string(), params: MaybeParams::Raw(None) }),
 
-    <start:@L> "create" "script" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: Some(params) }),
-    <start:@L> "create" "script" <id:Ident> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: None }),
+    <start:@L> "create" "script" <id:Ident> <params:WithClause> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: Some(params).into() }),
+    <start:@L> "create" "script" <id:Ident> <end:@L> => StmtRaw::Script(ScriptStmtRaw { start, end, id: id.to_string(), module: vec![], target: id.to_string(), params: MaybeParams::Raw(None) }),
 
     <start:@L> "select" <target:ComplexExprImut> "from" <from:StreamPort> <windows:WindowClause> <maybe_where:WhereClause> <maybe_group_by:GroupByClause> "into" <into:StreamPort> <maybe_having:HavingClause> <end:@L> => StmtRaw::Select(Box::new(SelectRaw { start, end, from, into, target, maybe_where, maybe_having, windows, maybe_group_by})),
 }
@@ -249,12 +254,45 @@ WithExpr: (IdentRaw<'input>, ImutExprRaw<'input>) = {
     <start:@L> <name:Ident> "=" <expr:ExprImut> => (name, expr)
 }
 
+
+Ports: Vec<IdentRaw<'input>> = {
+    <Sep<Ports, <Ident>, ",">> => <>
+}
+
 OperatorKind: OperatorKindRaw = {
     <start:@L> <module:Ident> "::" <oper:Ident> <end:@L> => OperatorKindRaw { start, end, module:  module.id.to_string(), operation: oper.id.to_string() }
 }
 
 EmbeddedScript: ScriptRaw<'input> = {
     "script" <exprs:Exprs> "end" => ScriptRaw::new(exprs, None),
+}
+
+Subquery: StmtsRaw<'input> = {
+    "subquery" <inner_stmts:SubqueryStmtInner> "end" => inner_stmts,
+}
+
+SubqueryStmtInner : StmtsRaw<'input> = {
+    <stmt:Stmt> ";" <list:Stmts> => {
+        let mut list = list;
+        list.insert(0,stmt);
+        list
+    },
+    <item:Stmt> ";"? => vec![item],
+}
+
+DefineSubquery: StmtRaw<'input> = {
+    <doc:DocComment> <start:@L> "define" "subquery" <id:Ident> <from:("from" <Ports>)?> <into:("into" <Ports>)?> <params:(<ScriptWithClause>)?> <subquery:Subquery> <end:@L> => {
+        StmtRaw::SubqueryDecl(SubqueryDeclRaw { start, end, id: id.id.to_string(), subquery, params: params.into(), from, into, doc })
+    }
+}
+
+CreateSubquery: StmtRaw<'input> = {
+    <start:@L> "create" "subquery" <id:Ident> <params:(<WithClause>)?> <end:@L>  => {
+        StmtRaw::SubqueryStmt(SubqueryStmtRaw { start, end, module: vec![], id: id.to_string(), target: id.to_string(), params: params.into() })
+    },
+    <start:@L> "create" "subquery" <id:Ident> "from" <target:ModularTarget> <params:(<WithClause>)?> <end:@L> => {
+        StmtRaw::SubqueryStmt(SubqueryStmtRaw { start, end, module: target.0, id: id.to_string(), target: target.1.id.to_string(), params: params.into() })
+    }
 }
 
 ///////////////////////////////////////
@@ -1415,6 +1453,7 @@ extern {
         "define" => Token::Define,
         "args" => Token::Args,
         "recur" => Token::Recur,
+        "subquery" => Token::Subquery,
 
         "set" => Token::Set,
         "each" => Token::Each,
