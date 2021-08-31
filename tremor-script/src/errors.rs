@@ -173,7 +173,8 @@ impl ErrorKind {
             AccessError, AggrInAggr, ArrayOutOfRange, AssignIntoArray, AssignToConst,
             BadAccessInEvent, BadAccessInGlobal, BadAccessInLocal, BadAccessInState, BadArity,
             BadArrayIndex, BadType, BinaryDrop, BinaryEmit, CantSetArgsConst, CantSetGroupConst,
-            CantSetWindowConst, Common, DecreasingRange, DoubleConst, DoubleStream,
+            CantSetWindowConst, Common, DecreasingRange, DeployArgNotSpecified,
+            DeployArtefactNotDefined, DeployRequiredArgDoesNotResolve, DoubleConst, DoubleStream,
             EmptyInterpolation, EmptyScript, ExtraToken, Generic, Grok, InvalidAssign,
             InvalidBinary, InvalidBitshift, InvalidConst, InvalidDrop, InvalidEmit,
             InvalidExtractor, InvalidFloatLiteral, InvalidFn, InvalidHexLiteral, InvalidIntLiteral,
@@ -251,7 +252,10 @@ impl ErrorKind {
             | TailingHereDoc(outer, inner, _, _)
             | Generic(outer, inner, _)
             | AggrInAggr(outer, inner)
-            | NotConstant(outer, inner) => (Some(*outer), Some(*inner)),
+            | NotConstant(outer, inner)
+            | DeployArtefactNotDefined(outer, inner, _)
+            | DeployArgNotSpecified(outer, inner, _)
+            | DeployRequiredArgDoesNotResolve(outer, inner, _) => (Some(*outer), Some(*inner)),
             // Special cases
             EmptyScript
             | Common(_)
@@ -820,6 +824,22 @@ error_chain! {
             description("Duplicate name used for the node")
                 // TODO would be nice to include location of the node where the name was already used
                 display("Name `{}` is already in use for another node, please use another name.", name)
+        }
+
+        /*
+         * Troy statements
+         */
+        DeployArtefactNotDefined(stmt: Range, inner: Range, name: String) {
+            description("Deployment artefact is not defined")
+                display("Artefact used in `from` is not defined or not found: {}", name)
+        }
+        DeployArgNotSpecified(stmt: Range, inner: Range, name: String) {
+            description("Deployment artefact has unknown argument")
+                display("Argument used was not formally specified in originating definition: {}", name)
+        }
+        DeployRequiredArgDoesNotResolve(stmt: Range, inner: Range, name: String) {
+            description("Deployment artefact argument has no value bound")
+                display("Argument `{}` is required, but no defaults are provided in the definition and no final values in the instance", name)
         }
 
     }

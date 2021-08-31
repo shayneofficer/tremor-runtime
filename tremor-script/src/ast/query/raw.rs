@@ -43,7 +43,7 @@ fn up_maybe_params<'script, 'registry>(
     params.map(|params| up_params(params, helper)).transpose()
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[allow(clippy::module_name_repetitions)]
 pub struct QueryRaw<'script> {
     pub(crate) config: WithExprsRaw<'script>,
@@ -73,6 +73,7 @@ impl<'script> QueryRaw<'script> {
             windows: helper.windows.clone(),
             scripts: helper.scripts.clone(),
             operators: helper.operators.clone(),
+            args: helper.consts.args.clone(),
         })
     }
 }

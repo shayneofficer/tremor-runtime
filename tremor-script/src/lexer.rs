@@ -137,6 +137,14 @@ pub(crate) fn ident_to_token(ident: &str) -> Token {
         "use" => Token::Use,
         "as" => Token::As,
         "recur" => Token::Recur,
+        "pipeline" => Token::Pipeline,
+        "connector" => Token::Connector,
+        "connect" => Token::Connect,
+        "flow" => Token::Flow,
+        "links" => Token::Links,
+        "instance" => Token::Instance,
+        "to" => Token::To,
+        "deploy" => Token::Deploy,
         src => Token::Ident(src.into(), false),
     }
 }
@@ -392,6 +400,22 @@ pub enum Token<'input> {
     LineDirective(Location, Cow<'input, str>),
     /// Config Directive
     ConfigDirective,
+    /// The `pipeline` keyword
+    Pipeline,
+    /// The `connector` keyword
+    Connector,
+    /// The `flow` keyword
+    Flow,
+    /// The `connect` keyword
+    Connect,
+    /// The `links` keyword
+    Links,
+    /// The `to` keyword
+    To,
+    /// The `instance` keyword
+    Instance,
+    /// The `deploy` keyword
+    Deploy,
 }
 
 impl<'input> Default for Token<'input> {
@@ -467,6 +491,14 @@ impl<'input> Token<'input> {
                 | Token::Where
                 | Token::Window
                 | Token::With
+                | Token::Pipeline
+                | Token::Connector
+                | Token::Flow
+                | Token::Links
+                | Token::Connect
+                | Token::To
+                | Token::Instance
+                | Token::Deploy
         )
     }
 
@@ -743,6 +775,7 @@ impl<'input> fmt::Display for Token<'input> {
             Token::Use => write!(f, "use"),
             Token::As => write!(f, "as"),
             Token::Recur => write!(f, "recur"),
+            // Preprocessor
             Token::ConfigDirective => write!(f, "#!config "),
             Token::LineDirective(l, file) => write!(
                 f,
@@ -753,6 +786,15 @@ impl<'input> fmt::Display for Token<'input> {
                 l.unit_id,
                 file
             ),
+            // Troy
+            Token::Pipeline => write!(f, "pipeline"),
+            Token::Connector => write!(f, "connector"),
+            Token::Flow => write!(f, "flow"),
+            Token::Links => write!(f, "links"),
+            Token::Connect => write!(f, "connect"),
+            Token::To => write!(f, "to"),
+            Token::Instance => write!(f, "instance"),
+            Token::Deploy => write!(f, "deploy"),
         }
     }
 }
@@ -982,8 +1024,16 @@ impl<'input> Preprocessor {
                 return Ok((cu, path));
             }
         }
-        file.set_extension("trickle");
 
+        file.set_extension("trickle");
+        if let Some(path) = module_path.resolve(&file) {
+            if path.is_file() {
+                let cu = include_stack.push(path.as_os_str())?;
+                return Ok((cu, path));
+            }
+        }
+
+        file.set_extension("troy");
         if let Some(path) = module_path.resolve(&file) {
             if path.is_file() {
                 let cu = include_stack.push(path.as_os_str())?;
