@@ -6498,6 +6498,7 @@ dependencies = [
  "float-cmp 0.9.0",
  "globwalk",
  "halfbrown",
+ "hashbrown 0.11.2",
  "http-types",
  "lalrpop",
  "log",
