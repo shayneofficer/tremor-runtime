@@ -38,7 +38,7 @@ use crate::{
         raw::{BytesDataType, Endian},
     },
     errors::{error_generic, error_no_consts, error_no_locals, ErrorKind, Result},
-    impl_expr_ex_mid, impl_expr_mid,
+    impl_expr, impl_expr_ex_mid, impl_expr_mid,
     interpreter::{exec_binary, exec_unary, AggrType, Cont, Env, ExecOpts, LocalStack},
     pos::{Location, Range},
     prelude::*,
@@ -497,6 +497,11 @@ pub struct Helper<'script, 'registry>
 where
     'script: 'registry,
 {
+    // NOTE We should refactor this into multiple structs as its becoming a bit of a
+    // spaghetti junction over time the languages and runtime continue to evolve. What
+    // we have today is no longer a helper, its essential, but badly factored for what
+    // we need today and looking forward
+    //
     reg: &'registry Registry,
     aggr_reg: &'registry AggrRegistry,
     can_emit: bool,
@@ -510,15 +515,18 @@ where
     windows: HashMap<String, WindowDecl<'script>>,
     scripts: HashMap<String, ScriptDecl<'script>>,
     operators: HashMap<String, OperatorDecl<'script>>,
-    pub(crate) aggregates: Vec<InvokeAggrFn<'script>>,
+    /// Runtime Aggregate function registry
+    pub aggregates: Vec<InvokeAggrFn<'script>>,
     /// Warnings
     pub warnings: Warnings,
     shadowed_vars: Vec<String>,
     func_vec: Vec<CustomFn<'script>>,
     pub(crate) locals: HashMap<String, usize>,
     pub(crate) functions: HashMap<Vec<String>, usize>,
-    pub(crate) consts: Consts<'script>,
-    pub(crate) meta: NodeMetas,
+    /// Runtime constant pool
+    pub consts: Consts<'script>,
+    /// AST Metadata
+    pub meta: NodeMetas,
     docs: Docs,
     module: Vec<String>,
     possible_leaf: bool,
@@ -579,7 +587,9 @@ where
         mem::swap(&mut self.locals, locals);
     }
 
-    pub(crate) fn new(
+    /// Creates a new AST helper
+    #[must_use]
+    pub fn new(
         reg: &'registry Registry,
         aggr_reg: &'registry AggrRegistry,
         cus: Vec<crate::lexer::CompilationUnit>,
@@ -679,6 +689,10 @@ where
 /// A tremor script instance
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Script<'script> {
+    /// Start
+    pub start: crate::pos::Location,
+    /// End
+    pub end: crate::pos::Location,
     /// Import definitions
     pub imports: Imports,
     /// Expressions of the script
@@ -697,6 +711,7 @@ pub struct Script<'script> {
     /// Documentation from the script
     pub docs: Docs,
 }
+impl_expr!(Script);
 
 impl<'script> Script<'script> {
     const NOT_IMUT: &'static str = "Not an imutable expression";
