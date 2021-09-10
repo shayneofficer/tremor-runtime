@@ -19,8 +19,9 @@ use super::{
     Script, Serialize, Stmts, Upable, Value,
 };
 use super::{raw::BaseExpr, Consts};
+use crate::ast::base_ref::BaseRef;
 use crate::ast::eq::AstEq;
-use crate::impl_expr_mid;
+use crate::{impl_expr_mid, impl_fqsn};
 use raw::WindowDefnRaw;
 
 /// A Tremor query
@@ -171,18 +172,7 @@ pub struct OperatorDecl<'script> {
     pub params: Option<HashMap<String, Value<'script>>>,
 }
 impl_expr_mid!(OperatorDecl);
-
-impl<'script> OperatorDecl<'script> {
-    /// Calculate the fully qualified name
-    #[must_use]
-    pub fn fqon(&self, module: &[String]) -> String {
-        if module.is_empty() {
-            self.id.clone()
-        } else {
-            format!("{}::{}", module.join("::"), self.id)
-        }
-    }
-}
+impl_fqsn!(OperatorDecl);
 
 /// An operator creation
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -213,18 +203,18 @@ pub struct ScriptDecl<'script> {
     pub script: Script<'script>,
 }
 impl_expr_mid!(ScriptDecl);
-
-impl<'script> ScriptDecl<'script> {
-    /// Calculate the fully qualified name
-    #[must_use]
-    pub fn fqsn(&self, module: &[String]) -> String {
-        if module.is_empty() {
-            self.id.clone()
-        } else {
-            format!("{}::{}", module.join("::"), self.id)
-        }
-    }
-}
+impl_fqsn!(ScriptDecl);
+// impl<'script> ScriptDecl<'script> {
+//     /// Calculate the fully qualified name
+//     #[must_use]
+//     pub fn fqsn(&self, module: &[String]) -> String {
+//         if module.is_empty() {
+//             self.id.clone()
+//         } else {
+//             format!("{}::{}", module.join("::"), self.id)
+//         }
+//     }
+// }
 
 /// A script creation
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -267,6 +257,7 @@ pub struct WindowDecl<'script> {
     pub script: Option<Script<'script>>,
 }
 impl_expr_mid!(WindowDecl);
+impl_fqsn!(WindowDecl);
 
 impl<'script> WindowDecl<'script> {
     /// `emit_empty_windows` setting

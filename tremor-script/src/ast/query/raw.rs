@@ -22,6 +22,7 @@ use super::{
     Query, Registry, Result, ScriptDecl, ScriptStmt, Select, SelectStmt, Serialize, Stmt,
     StreamStmt, Upable, Value, WindowDecl, WindowKind,
 };
+use crate::ast::base_ref::BaseRef;
 use crate::ast::visitors::{GroupByExprExtractor, TargetEventRefVisitor};
 use crate::{ast::InvokeAggrFn, impl_expr};
 use beef::Cow;
@@ -134,7 +135,7 @@ impl<'script> Upable<'script> for StmtRaw<'script> {
                 let stmt: OperatorDecl<'script> = stmt.up(helper)?;
                 helper
                     .operators
-                    .insert(stmt.fqon(&stmt.module), stmt.clone());
+                    .insert(stmt.fqsn(&stmt.module), stmt.clone());
                 Ok(Stmt::OperatorDecl(stmt))
             }
             StmtRaw::Operator(stmt) => Ok(Stmt::Operator(stmt.up(helper)?)),
@@ -177,7 +178,7 @@ impl<'script> Upable<'script> for OperatorDeclRaw<'script> {
         };
         helper
             .operators
-            .insert(operator_decl.fqon(&helper.module), operator_decl.clone());
+            .insert(operator_decl.fqsn(&helper.module), operator_decl.clone());
         Ok(operator_decl)
     }
 }
@@ -234,7 +235,7 @@ impl<'script> ModuleStmtRaw<'script> {
                 }
                 StmtRaw::OperatorDecl(stmt) => {
                     let o = stmt.up(&mut helper)?;
-                    helper.operators.insert(o.fqon(&helper.module), o);
+                    helper.operators.insert(o.fqsn(&helper.module), o);
                 }
                 ref e => {
                     return error_generic(e, e, &Self::BAD_STMT, &helper.meta);
