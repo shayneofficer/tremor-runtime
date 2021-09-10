@@ -305,14 +305,14 @@ pub struct SubqueryStmtRaw<'script> {
 impl_expr!(SubqueryStmtRaw);
 
 impl<'script> SubqueryStmtRaw<'script> {
-    fn mangle_id(&self, id: String) -> String {
+    fn mangle_id(&self, id: &str) -> String {
         //TTODO Remove `A`
         format! {"A__SUBQ__{}_{}",self.id, id}
     }
 
     fn get_args_map<'registry>(
         &self,
-        decl_params: Option<HashMap<String, Value<'script>>>,
+        decl_params: &Option<HashMap<String, Value<'script>>>,
         stmt_params: Option<HashMap<String, Value<'script>>>,
         helper: &Helper<'script, 'registry>,
     ) -> Result<HashMap<String, Value<'script>>> {
@@ -343,12 +343,11 @@ impl<'script> SubqueryStmtRaw<'script> {
     }
 
     fn inline_params<'registry>(
-        &self,
         params: Params<'script>,
         sq_args: &HashMap<String, Value<'script>>,
         helper: &mut Helper<'script, 'registry>,
     ) -> Result<HashMap<String, Value<'script>>> {
-        match params.into() {
+        match params {
             // ALLOW: Only Raw params can be inlined.
             Params::Processed(_) => unreachable!("Can't inline processed params."),
             Params::Raw(params) => params
@@ -360,10 +359,9 @@ impl<'script> SubqueryStmtRaw<'script> {
                     })) = &value
                     {
                         if let Segment::Id { key, .. } = &segments[0] {
-                            let arg = key.key().clone();
-                            match sq_args.get(arg) {
-                                Some(arg_val) => return Ok((name.to_string(), arg_val.clone())),
-                                None => (),
+                            let arg = key.key();
+                            if let Some(arg_val) = sq_args.get(arg) {
+                                return Ok((name.to_string(), arg_val.clone()));
                             }
                         }
                     }
@@ -374,7 +372,6 @@ impl<'script> SubqueryStmtRaw<'script> {
     }
 
     fn inline_maybe_params<'registry>(
-        &self,
         params: MaybeParams<'script>,
         sq_args: &HashMap<String, Value<'script>>,
         helper: &mut Helper<'script, 'registry>,
@@ -383,7 +380,7 @@ impl<'script> SubqueryStmtRaw<'script> {
             // ALLOW: Only Raw params can be inlined.
             MaybeParams::Processed(_) => unreachable!("Can't inline processed params."),
             MaybeParams::Raw(params) => params
-                .map(|params| self.inline_params(params.into(), sq_args, helper))
+                .map(|params| SubqueryStmtRaw::inline_params(params.into(), sq_args, helper))
                 .transpose(),
         }
     }
@@ -414,16 +411,16 @@ impl<'script> SubqueryStmtRaw<'script> {
                         end: self.end,
                         id: port.id.to_string(),
                     });
-                    subquery_stmts.push(stream_stmt)
+                    subquery_stmts.push(stream_stmt);
                 }
 
                 subquery_stmts.extend(subquery_decl.raw_stmts.clone());
-                let subq_module = &self.mangle_id(self.id.clone());
+                let subq_module = &self.mangle_id(&self.id);
                 helper.module.push(subq_module.clone());
 
                 let decl_params = subquery_decl.params.clone();
-                let stmt_params = up_maybe_params(self.params.clone().into(), &mut helper)?;
-                let subq_args = self.get_args_map(decl_params, stmt_params, &helper)?;
+                let stmt_params = up_maybe_params(self.params.clone(), &mut helper)?;
+                let subq_args = self.get_args_map(&decl_params, stmt_params, helper)?;
 
                 for stmt in subquery_stmts {
                     match stmt {
@@ -431,68 +428,86 @@ impl<'script> SubqueryStmtRaw<'script> {
                             m.define(helper.reg, helper.aggr_reg, &mut vec![], &mut helper)?;
                         }
                         StmtRaw::SubqueryStmt(mut s) => {
-                            s.id = self.mangle_id(s.id);
-                            s.params = self
-                                .inline_maybe_params(s.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            s.id = self.mangle_id(&s.id);
+                            s.params = SubqueryStmtRaw::inline_maybe_params(
+                                s.params,
+                                &subq_args,
+                                &mut helper,
+                            )?
+                            .into();
                             s.inline(&mut helper, &mut query_stmts)?;
                         }
                         StmtRaw::Operator(mut o) => {
-                            o.id = self.mangle_id(o.id);
-                            o.params = self
-                                .inline_maybe_params(o.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            o.id = self.mangle_id(&o.id);
+                            o.params = SubqueryStmtRaw::inline_maybe_params(
+                                o.params,
+                                &subq_args,
+                                &mut helper,
+                            )?
+                            .into();
                             let mut o = o.up(helper)?;
                             o.module.push(subq_module.clone());
                             query_stmts.push(Stmt::Operator(o));
                         }
                         StmtRaw::Script(mut s) => {
-                            s.id = self.mangle_id(s.id);
-                            s.params = self
-                                .inline_maybe_params(s.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            s.id = self.mangle_id(&s.id);
+                            s.params = SubqueryStmtRaw::inline_maybe_params(
+                                s.params,
+                                &subq_args,
+                                &mut helper,
+                            )?
+                            .into();
                             let mut s = s.up(helper)?;
                             s.module.push(subq_module.clone());
                             query_stmts.push(Stmt::Script(s));
                         }
                         StmtRaw::Stream(mut s) => {
-                            s.id = self.mangle_id(s.id);
+                            s.id = self.mangle_id(&s.id);
                             query_stmts.push(Stmt::Stream(s.up(helper)?));
                         }
                         StmtRaw::Select(mut s) => {
                             // TTODO Inline args in where, having, groupby clauses
-                            s.from.0.id = Cow::owned(self.mangle_id(s.from.0.id.to_string()));
-                            s.into.0.id = Cow::owned(self.mangle_id(s.into.0.id.to_string()));
+                            s.from.0.id = Cow::owned(self.mangle_id(&s.from.0.id.to_string()));
+                            s.into.0.id = Cow::owned(self.mangle_id(&s.into.0.id.to_string()));
                             // TTODO This leads to ugly error messages if stream is not defined.
                             // `Stream used in `from` or `into` is not defined: A__SUBQ__custom_subquery_out`
                             query_stmts.push(StmtRaw::Select(s).up(&mut helper)?);
                         }
                         StmtRaw::ScriptDecl(mut s) => {
-                            s.params = self
-                                .inline_maybe_params(s.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            s.params = SubqueryStmtRaw::inline_maybe_params(
+                                s.params,
+                                &subq_args,
+                                &mut helper,
+                            )?
+                            .into();
                             query_stmts.push(StmtRaw::ScriptDecl(s).up(&mut helper)?);
                         }
                         StmtRaw::OperatorDecl(mut o) => {
-                            o.params = self
-                                .inline_maybe_params(o.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            o.params = SubqueryStmtRaw::inline_maybe_params(
+                                o.params,
+                                &subq_args,
+                                &mut helper,
+                            )?
+                            .into();
                             query_stmts.push(StmtRaw::OperatorDecl(o).up(&mut helper)?);
                         }
                         StmtRaw::SubqueryDecl(mut s) => {
-                            s.params = self
-                                .inline_maybe_params(s.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            s.params = SubqueryStmtRaw::inline_maybe_params(
+                                s.params,
+                                &subq_args,
+                                &mut helper,
+                            )?
+                            .into();
                             query_stmts.push(StmtRaw::SubqueryDecl(s).up(&mut helper)?);
                         }
                         StmtRaw::WindowDecl(mut w) => {
-                            w.params = self
-                                .inline_params(w.params.into(), &subq_args, &mut helper)?
-                                .into();
+                            w.params =
+                                SubqueryStmtRaw::inline_params(w.params, &subq_args, &mut helper)?
+                                    .into();
                             query_stmts.push(StmtRaw::WindowDecl(w).up(&mut helper)?);
                         }
-                        other => {
-                            query_stmts.push(other.up(&mut helper)?);
+                        StmtRaw::Expr(e) => {
+                            query_stmts.push(StmtRaw::Expr(e).up(&mut helper)?);
                         }
                     }
                 }
