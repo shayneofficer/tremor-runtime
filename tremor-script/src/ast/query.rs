@@ -57,6 +57,8 @@ pub enum Stmt<'script> {
     Script(ScriptStmt<'script>),
     /// An subquery declaration
     SubqueryDecl(SubqueryDecl<'script>),
+    /// An subquery creation
+    SubqueryStmt(SubqueryStmt),
     /// A select statement
     Select(SelectStmt<'script>),
 }
@@ -70,6 +72,7 @@ impl<'script> BaseExpr for Stmt<'script> {
             Stmt::OperatorDecl(s) => s.mid(),
             Stmt::ScriptDecl(s) => s.mid(),
             Stmt::SubqueryDecl(s) => s.mid(),
+            Stmt::SubqueryStmt(s) => s.mid(),
             Stmt::Operator(s) => s.mid(),
             Stmt::Script(s) => s.mid(),
             Stmt::Select(s) => s.mid(),
@@ -270,6 +273,23 @@ impl<'script> SubqueryDecl<'script> {
         } else {
             format!("{}::{}", module.join("::"), self.id)
         }
+    }
+}
+
+/// A subquery creation
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SubqueryStmt {
+    pub(crate) mid: usize,
+    /// Module of the subquery
+    pub module: Vec<String>,
+    /// ID of the subquery
+    pub id: String,
+    /// Map of subquery ports and internal stream id
+    pub port_stream_map: HashMap<String, String>,
+}
+impl BaseExpr for SubqueryStmt {
+    fn mid(&self) -> usize {
+        self.mid
     }
 }
 

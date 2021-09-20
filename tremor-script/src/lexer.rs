@@ -137,7 +137,7 @@ pub(crate) fn ident_to_token(ident: &str) -> Token {
         "use" => Token::Use,
         "as" => Token::As,
         "recur" => Token::Recur,
-        "subquery" => Token::Subquery,
+        "query" => Token::Subquery,
         src => Token::Ident(src.into(), false),
     }
 }
@@ -748,7 +748,7 @@ impl<'input> fmt::Display for Token<'input> {
             Token::As => write!(f, "as"),
             Token::Recur => write!(f, "recur"),
             Token::ConfigDirective => write!(f, "#!config "),
-            Token::Subquery => write!(f, "subquery"),
+            Token::Subquery => write!(f, "query"),
             Token::LineDirective(l, file) => write!(
                 f,
                 "#!line {} {} {} {} {}",

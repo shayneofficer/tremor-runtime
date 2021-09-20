@@ -376,6 +376,9 @@ impl Query {
                 | Stmt::ScriptDecl(_)
                 | Stmt::OperatorDecl(_)
                 | Stmt::SubqueryDecl(_) => {}
+                Stmt::SubqueryStmt(_s) => {
+                    // TTODO: passthrough `s.id`/`port` to `s.port_stream_map.get(`port)`
+                }
                 Stmt::Operator(o) => {
                     if nodes.contains_key(&common_cow(&o.id)) {
                         let error_func = if has_builtin_node_name(&common_cow(&o.id)) {

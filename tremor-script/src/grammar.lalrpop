@@ -268,7 +268,7 @@ EmbeddedScript: ScriptRaw<'input> = {
 }
 
 Subquery: StmtsRaw<'input> = {
-    "subquery" <inner_stmts:SubqueryStmtInner> "end" => inner_stmts,
+    "query" <inner_stmts:SubqueryStmtInner> "end" => inner_stmts,
 }
 
 SubqueryStmtInner : StmtsRaw<'input> = {
@@ -281,16 +281,16 @@ SubqueryStmtInner : StmtsRaw<'input> = {
 }
 
 DefineSubquery: StmtRaw<'input> = {
-    <doc:DocComment> <start:@L> "define" "subquery" <id:Ident> <from:("from" <Ports>)?> <into:("into" <Ports>)?> <params:(<ScriptWithClause>)?> <subquery:Subquery> <end:@L> => {
+    <doc:DocComment> <start:@L> "define" "query" <id:Ident> <from:("from" <Ports>)?> <into:("into" <Ports>)?> <params:(<ScriptWithClause>)?> <subquery:Subquery> <end:@L> => {
         StmtRaw::SubqueryDecl(SubqueryDeclRaw { start, end, id: id.id.to_string(), subquery, params: params.into(), from, into, doc })
     }
 }
 
 CreateSubquery: StmtRaw<'input> = {
-    <start:@L> "create" "subquery" <id:Ident> <params:(<WithClause>)?> <end:@L>  => {
+    <start:@L> "create" "query" <id:Ident> <params:(<WithClause>)?> <end:@L>  => {
         StmtRaw::SubqueryStmt(SubqueryStmtRaw { start, end, module: vec![], id: id.to_string(), target: id.to_string(), params: params.into() })
     },
-    <start:@L> "create" "subquery" <id:Ident> "from" <target:ModularTarget> <params:(<WithClause>)?> <end:@L> => {
+    <start:@L> "create" "query" <id:Ident> "from" <target:ModularTarget> <params:(<WithClause>)?> <end:@L> => {
         StmtRaw::SubqueryStmt(SubqueryStmtRaw { start, end, module: target.0, id: id.to_string(), target: target.1.id.to_string(), params: params.into() })
     }
 }
@@ -1453,7 +1453,7 @@ extern {
         "define" => Token::Define,
         "args" => Token::Args,
         "recur" => Token::Recur,
-        "subquery" => Token::Subquery,
+        "query" => Token::Subquery,
 
         "set" => Token::Set,
         "each" => Token::Each,

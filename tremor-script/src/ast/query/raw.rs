@@ -19,15 +19,24 @@ use std::collections::HashSet;
 
 use super::super::raw::{ExprRaw, IdentRaw, ImutExprRaw, ModuleRaw, ScriptRaw, WithExprsRaw};
 use super::{
-    super::{ReservedPath, Segment},
-    error_generic, error_no_consts, error_no_locals, AggrRegistry, BaseExpr, GroupBy, GroupByInt,
-    HashMap, Helper, ImutExpr, ImutExprInt, Location, NodeMetas, OperatorDecl, OperatorKind,
-    OperatorStmt, Path, Query, Registry, Result, ScriptDecl, ScriptStmt, Select, SelectStmt,
-    Serialize, Stmt, StreamStmt, SubqueryDecl, Upable, Value, WindowDecl, WindowKind,
+    error_generic, error_no_consts, error_no_locals, AggrRegistry, BaseExpr, Consts, GroupBy,
+    GroupByInt, HashMap, Helper, ImutExpr, ImutExprInt, Location, NodeMetas, OperatorDecl,
+    OperatorKind, OperatorStmt, Query, Registry, Result, ScriptDecl, ScriptStmt, Select,
+    SelectStmt, Serialize, Stmt, StreamStmt, SubqueryDecl, SubqueryStmt, Upable, Value, WindowDecl,
+    WindowKind,
 };
 use crate::ast::visitors::{GroupByExprExtractor, TargetEventRefVisitor};
-use crate::{ast::InvokeAggrFn, impl_expr};
+use crate::{
+    ast::InvokeAggrFn,
+    impl_expr,
+    interpreter::{Env, ExecOpts, LocalStack},
+    AggrType, EventContext,
+};
 use beef::Cow;
+use std::collections::HashSet;
+use std::iter::FromIterator;
+use tremor_common::time::nanotime;
+use value_trait::Builder;
 
 fn up_params<'script, 'registry>(
     params: Params<'script>,
@@ -107,8 +116,9 @@ impl<'script> QueryRaw<'script> {
                 StmtRaw::ModuleStmt(m) => {
                     m.define(helper.reg, helper.aggr_reg, &mut vec![], &mut helper)?;
                 }
-                StmtRaw::SubqueryStmt(sq) => {
-                    sq.inline(&mut helper, &mut stmts)?;
+                StmtRaw::SubqueryStmt(sq_raw) => {
+                    let sq = sq_raw.inline(&mut helper, &mut stmts)?;
+                    stmts.push(Stmt::SubqueryStmt(sq));
                 }
                 other => {
                     let f = other.up(&mut helper)?;
@@ -163,6 +173,7 @@ pub enum StmtRaw<'script> {
 impl<'script> StmtRaw<'script> {
     const BAD_MODULE: &'static str = "Module in wrong place error";
     const BAD_EXPR: &'static str = "Expression in wrong place error";
+    const BAD_SUBQ: &'static str = "Subquery Stmt in wrong place error";
 }
 
 impl<'script> Upable<'script> for StmtRaw<'script> {
@@ -214,9 +225,7 @@ impl<'script> Upable<'script> for StmtRaw<'script> {
                 Ok(Stmt::WindowDecl(Box::new(stmt)))
             }
             StmtRaw::ModuleStmt(ref m) => error_generic(m, m, &Self::BAD_MODULE, &helper.meta),
-            StmtRaw::SubqueryStmt(ref sq) => {
-                error_generic(sq, sq, &"Subquery stmts are inlined.", &helper.meta)
-            } //TTODO Placeholder
+            StmtRaw::SubqueryStmt(ref sq) => error_generic(sq, sq, &Self::BAD_SUBQ, &helper.meta),
             StmtRaw::Expr(m) => error_generic(&*m, &*m, &Self::BAD_EXPR, &helper.meta),
         }
     }
@@ -267,14 +276,31 @@ impl_expr!(SubqueryDeclRaw);
 impl<'script> Upable<'script> for SubqueryDeclRaw<'script> {
     type Target = SubqueryDecl<'script>;
     fn up<'registry>(self, helper: &mut Helper<'script, 'registry>) -> Result<Self::Target> {
-        let from = match self.from {
-            Some(ports) => ports.into_iter().map(|ident| ident.up(helper)).collect(),
-            None => Ok(vec!["in".into()]),
-        }?;
-        let into = match self.into {
-            Some(ports) => ports.into_iter().map(|ident| ident.up(helper)).collect(),
-            None => Ok(vec!["out".into(), "err".into()]),
-        }?;
+        let from = self.from.up(helper)?.unwrap_or_else(|| vec!["in".into()]);
+        let into = self
+            .into
+            .up(helper)?
+            .unwrap_or_else(|| vec!["out".into(), "err".into()]);
+
+        let ports_set: HashSet<_> = from
+            .iter()
+            .chain(into.iter())
+            .map(std::string::ToString::to_string)
+            .collect();
+        for stmt in &self.subquery {
+            if let StmtRaw::Stream(stream_raw) = stmt {
+                if ports_set.get(&stream_raw.id).is_some() {
+                    let stream = stream_raw.clone().up(helper)?;
+                    return error_generic(
+                        &stream,
+                        &stream,
+                        &"Streams cannot share names with from/into ports",
+                        &helper.meta,
+                    );
+                }
+            }
+        }
+
         let subquery_decl = SubqueryDecl {
             mid: helper.add_meta_w_name(self.start, self.end, &self.id),
             module: helper.module.clone(),
@@ -306,7 +332,7 @@ impl_expr!(SubqueryStmtRaw);
 
 impl<'script> SubqueryStmtRaw<'script> {
     fn mangle_id(&self, id: &str) -> String {
-        //TTODO Remove `A`
+        // TTODO Remove `A`
         format! {"A__SUBQ__{}_{}",self.id, id}
     }
 
@@ -342,30 +368,62 @@ impl<'script> SubqueryStmtRaw<'script> {
         }
     }
 
+    fn eval_expr_with_args<'registry>(
+        expr: &ImutExprInt<'script>,
+        args: HashMap<String, Value<'script>>,
+        helper: &Helper<'script, 'registry>,
+    ) -> Result<Value<'script>> {
+        const NO_AGGRS: [InvokeAggrFn<'static>; 0] = [];
+        let exec = ExecOpts {
+            aggr: AggrType::Emit,
+            result_needed: true,
+        };
+        let ctx = EventContext::new(nanotime(), None);
+        let event = Value::null();
+        let state = Value::null();
+        let meta = Value::null();
+        let local = LocalStack::with_size(0);
+
+        let args = Value::from_iter(args);
+
+        let consts = Consts::new();
+        let run_consts = consts.run();
+        let run_consts = run_consts.with_new_args(&args);
+
+        let env = Env {
+            context: &ctx,
+            consts: run_consts,
+            aggrs: &NO_AGGRS,
+            meta: &helper.meta,
+            recursion_limit: crate::recursion_limit(),
+        };
+
+        match expr.run(exec, &env, &event, &state, &meta, &local) {
+            Ok(value) => Ok(value.into_owned()),
+            _ => error_generic(
+                expr,
+                expr,
+                &"Failed to process expression".to_string(),
+                &helper.meta,
+            ),
+        }
+    }
+
     fn inline_params<'registry>(
         params: Params<'script>,
         sq_args: &HashMap<String, Value<'script>>,
         helper: &mut Helper<'script, 'registry>,
     ) -> Result<HashMap<String, Value<'script>>> {
         match params {
-            // ALLOW: Only Raw params can be inlined.
-            Params::Processed(_) => unreachable!("Can't inline processed params."),
+            // Subqueries inline params before up()-ing them, the `params` here must be Raw.
+            Params::Processed(_) => Err("Can't inline processed params.".into()),
             Params::Raw(params) => params
                 .into_iter()
-                .map(|(name, value)| {
-                    let value = value.up(helper)?;
-                    if let ImutExprInt::Path(Path::Reserved(ReservedPath::Args {
-                        segments, ..
-                    })) = &value
-                    {
-                        if let Segment::Id { key, .. } = &segments[0] {
-                            let arg = key.key();
-                            if let Some(arg_val) = sq_args.get(arg) {
-                                return Ok((name.to_string(), arg_val.clone()));
-                            }
-                        }
-                    }
-                    Ok((name.to_string(), value.try_into_value(helper)?))
+                .map(|(name, value_expr)| {
+                    let value_expr = value_expr.up(helper)?;
+                    let value =
+                        SubqueryStmtRaw::eval_expr_with_args(&value_expr, sq_args.clone(), helper)?;
+                    Ok((name.to_string(), value))
                 })
                 .collect(),
         }
@@ -377,19 +435,20 @@ impl<'script> SubqueryStmtRaw<'script> {
         helper: &mut Helper<'script, 'registry>,
     ) -> Result<Option<HashMap<String, Value<'script>>>> {
         match params {
-            // ALLOW: Only Raw params can be inlined.
-            MaybeParams::Processed(_) => unreachable!("Can't inline processed params."),
+            // Subqueries inline params before up()-ing them, the `params` here must be Raw.
+            MaybeParams::Processed(_) => Err("Can't inline processed params.".into()),
             MaybeParams::Raw(params) => params
                 .map(|params| SubqueryStmtRaw::inline_params(params.into(), sq_args, helper))
                 .transpose(),
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn inline<'registry>(
         self,
         mut helper: &mut Helper<'script, 'registry>,
         mut query_stmts: &mut Vec<Stmt<'script>>,
-    ) -> Result<()> {
+    ) -> Result<SubqueryStmt> {
         // Calculate the fully qualified name for the subquery declaration.
         let fq_subquery_defn = if self.module.is_empty() {
             self.target.clone()
@@ -399,18 +458,26 @@ impl<'script> SubqueryStmtRaw<'script> {
         };
 
         match helper.subqueries.get(&fq_subquery_defn) {
-            None => error_generic(&self, &self, &"subquery not found", &helper.meta),
+            None => error_generic(
+                &self,
+                &self,
+                &format!("subquery `{}` not found", fq_subquery_defn),
+                &helper.meta,
+            ),
             Some(subquery_decl) => {
                 let mut subquery_stmts = vec![];
+
+                let mut ports_set: HashSet<_> = HashSet::new();
+                let mut subquery_stream_map: HashMap<String, String> = HashMap::new();
 
                 let ports = subquery_decl.from.iter().chain(subquery_decl.into.iter());
                 for port in ports {
                     let stream_stmt = StmtRaw::Stream(StreamStmtRaw {
-                        // TTODO Use start/end from Port for better errors
-                        start: self.start,
-                        end: self.end,
+                        start: port.s(&helper.meta),
+                        end: port.e(&helper.meta),
                         id: port.id.to_string(),
                     });
+                    ports_set.insert(port.id.to_string());
                     subquery_stmts.push(stream_stmt);
                 }
 
@@ -435,7 +502,14 @@ impl<'script> SubqueryStmtRaw<'script> {
                                 &mut helper,
                             )?
                             .into();
-                            s.inline(&mut helper, &mut query_stmts)?;
+                            let subq_module = IdentRaw {
+                                start: s.s(&helper.meta),
+                                end: s.e(&helper.meta),
+                                id: subq_module.clone().into(),
+                            };
+                            s.module.push(subq_module);
+                            let s_up = s.inline(&mut helper, &mut query_stmts)?;
+                            query_stmts.push(Stmt::SubqueryStmt(s_up));
                         }
                         StmtRaw::Operator(mut o) => {
                             o.id = self.mangle_id(&o.id);
@@ -462,8 +536,13 @@ impl<'script> SubqueryStmtRaw<'script> {
                             query_stmts.push(Stmt::Script(s));
                         }
                         StmtRaw::Stream(mut s) => {
+                            let unmangled_id = &s.id.clone();
                             s.id = self.mangle_id(&s.id);
-                            query_stmts.push(Stmt::Stream(s.up(helper)?));
+                            let s = s.up(helper)?;
+                            if let Some(port_name) = ports_set.get(unmangled_id) {
+                                subquery_stream_map.insert(port_name.clone(), s.id.clone());
+                            }
+                            query_stmts.push(Stmt::Stream(s));
                         }
                         StmtRaw::Select(mut s) => {
                             // TTODO Inline args in where, having, groupby clauses
@@ -492,6 +571,7 @@ impl<'script> SubqueryStmtRaw<'script> {
                             query_stmts.push(StmtRaw::OperatorDecl(o).up(&mut helper)?);
                         }
                         StmtRaw::SubqueryDecl(mut s) => {
+                            // Inline the parent subquery's `args` in the child's `with` clause, if any.
                             s.params = SubqueryStmtRaw::inline_maybe_params(
                                 s.params,
                                 &subq_args,
@@ -512,7 +592,12 @@ impl<'script> SubqueryStmtRaw<'script> {
                     }
                 }
                 helper.module.pop();
-                Ok(())
+                Ok(SubqueryStmt {
+                    mid: helper.add_meta_w_name(self.start, self.end, &self.id),
+                    module: helper.module.clone(),
+                    id: self.id,
+                    port_stream_map: subquery_stream_map,
+                })
             }
         }
     }
