@@ -362,6 +362,30 @@ impl ModDoc {
     }
 }
 
+/// Documentation from a query statement
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryDeclDoc {
+    /// Statment name
+    pub name: String,
+    /// Statment documentation
+    pub doc: Option<String>,
+}
+
+impl ToString for QueryDeclDoc {
+    fn to_string(&self) -> String {
+        format!(
+            r#"
+### {}
+
+
+{}
+"#,
+            self.name,
+            &self.doc.clone().unwrap_or_default()
+        )
+    }
+}
+
 /// Documentation from a module
 #[derive(Debug, Clone, PartialEq)]
 pub struct Docs {
@@ -369,6 +393,8 @@ pub struct Docs {
     pub consts: Vec<ConstDoc>,
     /// Functions
     pub fns: Vec<FnDoc>,
+    /// Query Stament documentation
+    pub query_decls: Vec<QueryDeclDoc>,
     /// Module level documentation
     pub module: Option<ModDoc>,
 }
@@ -378,6 +404,7 @@ impl Default for Docs {
         Self {
             consts: Vec::new(),
             fns: Vec::new(),
+            query_decls: Vec::new(),
             module: None,
         }
     }
@@ -500,7 +527,7 @@ where
     windows: HashMap<String, WindowDecl<'script>>,
     scripts: HashMap<String, ScriptDecl<'script>>,
     operators: HashMap<String, OperatorDecl<'script>>,
-    subqueries: HashMap<String, SubqueryDecl<'script>>,
+    subquery_defns: HashMap<String, SubqueryDecl<'script>>,
     aggregates: Vec<InvokeAggrFn<'script>>,
     /// Warnings
     pub warnings: Warnings,
@@ -538,6 +565,13 @@ where
             name: name.to_string(),
             doc,
             value_type,
+        });
+    }
+    fn add_query_decl_doc<N: ToString>(&mut self, name: &N, doc: Option<Vec<Cow<'script, str>>>) {
+        let doc = doc.map(|d| d.iter().map(|l| l.trim()).collect::<Vec<_>>().join("\n"));
+        self.docs.query_decls.push(QueryDeclDoc {
+            name: name.to_string(),
+            doc,
         });
     }
     pub(crate) fn add_meta(&mut self, start: Location, end: Location) -> usize {
@@ -583,7 +617,7 @@ where
             windows: HashMap::new(),
             scripts: HashMap::new(),
             operators: HashMap::new(),
-            subqueries: HashMap::new(),
+            subquery_defns: HashMap::new(),
             aggregates: Vec::new(),
             warnings: BTreeSet::new(),
             locals: HashMap::new(),

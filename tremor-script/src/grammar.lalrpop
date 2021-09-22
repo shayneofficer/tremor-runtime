@@ -290,6 +290,7 @@ CreateSubquery: StmtRaw<'input> = {
     <start:@L> "create" "query" <id:Ident> <params:(<WithClause>)?> <end:@L>  => {
         StmtRaw::SubqueryStmt(SubqueryStmtRaw { start, end, module: vec![], id: id.to_string(), target: id.to_string(), params: params.into() })
     },
+    // With ModulartTarget
     <start:@L> "create" "query" <id:Ident> "from" <target:ModularTarget> <params:(<WithClause>)?> <end:@L> => {
         StmtRaw::SubqueryStmt(SubqueryStmtRaw { start, end, module: target.0, id: id.to_string(), target: target.1.id.to_string(), params: params.into() })
     }

@@ -25,7 +25,7 @@ use super::{
     SelectStmt, Serialize, Stmt, StreamStmt, SubqueryDecl, SubqueryStmt, Upable, Value, WindowDecl,
     WindowKind,
 };
-use crate::ast::visitors::{GroupByExprExtractor, TargetEventRefVisitor};
+use crate::ast::visitors::{ArgsRewriter, GroupByExprExtractor, TargetEventRefVisitor};
 use crate::{
     ast::InvokeAggrFn,
     impl_expr,
@@ -33,9 +33,7 @@ use crate::{
     AggrType, EventContext,
 };
 use beef::Cow;
-use std::collections::HashSet;
 use std::iter::FromIterator;
-use tremor_common::time::nanotime;
 use value_trait::Builder;
 
 fn up_params<'script, 'registry>(
@@ -109,26 +107,18 @@ impl<'script> QueryRaw<'script> {
         mut helper: &mut Helper<'script, 'registry>,
     ) -> Result<Query<'script>> {
         let mut stmts = vec![];
-        let mut stream_names = HashSet::new();
 
-        for (_i, e) in self.stmts.into_iter().enumerate() {
-            match e {
+        for stmt_raw in self.stmts {
+            match stmt_raw {
                 StmtRaw::ModuleStmt(m) => {
                     m.define(helper.reg, helper.aggr_reg, &mut vec![], &mut helper)?;
                 }
-                StmtRaw::SubqueryStmt(sq_raw) => {
-                    let sq = sq_raw.inline(&mut helper, &mut stmts)?;
-                    stmts.push(Stmt::SubqueryStmt(sq));
+                StmtRaw::SubqueryStmt(sq_stmt_raw) => {
+                    let sq_stmt = sq_stmt_raw.inline(&mut stmts, &mut helper)?;
+                    stmts.push(Stmt::SubqueryStmt(sq_stmt));
                 }
                 other => {
-                    let f = other.up(&mut helper)?;
-
-                    if let Stmt::Stream(s) = &f {
-                        if !stream_names.insert(s.id.clone()) {
-                            return error_generic(&f, &f, &"duplicate stream name", &helper.meta);
-                        }
-                    }
-                    stmts.push(f);
+                    stmts.push(other.up(&mut helper)?);
                 }
             }
         }
@@ -201,29 +191,12 @@ impl<'script> Upable<'script> for StmtRaw<'script> {
                 }))
             }
             StmtRaw::Stream(stmt) => Ok(Stmt::Stream(stmt.up(helper)?)),
-            StmtRaw::OperatorDecl(stmt) => {
-                let stmt: OperatorDecl<'script> = stmt.up(helper)?;
-                helper
-                    .operators
-                    .insert(stmt.fqon(&stmt.module), stmt.clone());
-                Ok(Stmt::OperatorDecl(stmt))
-            }
+            StmtRaw::OperatorDecl(stmt) => Ok(Stmt::OperatorDecl(stmt.up(helper)?)),
             StmtRaw::Operator(stmt) => Ok(Stmt::Operator(stmt.up(helper)?)),
-            StmtRaw::ScriptDecl(stmt) => {
-                let stmt: ScriptDecl<'script> = stmt.up(helper)?;
-                helper.scripts.insert(stmt.fqsn(&stmt.module), stmt.clone());
-                Ok(Stmt::ScriptDecl(Box::new(stmt)))
-            }
+            StmtRaw::ScriptDecl(stmt) => Ok(Stmt::ScriptDecl(Box::new(stmt.up(helper)?))),
             StmtRaw::Script(stmt) => Ok(Stmt::Script(stmt.up(helper)?)),
-            StmtRaw::SubqueryDecl(stmt) => {
-                let stmt: SubqueryDecl<'script> = stmt.up(helper)?;
-                Ok(Stmt::SubqueryDecl(stmt))
-            }
-            StmtRaw::WindowDecl(stmt) => {
-                let stmt: WindowDecl<'script> = stmt.up(helper)?;
-                helper.windows.insert(stmt.fqwn(&stmt.module), stmt.clone());
-                Ok(Stmt::WindowDecl(Box::new(stmt)))
-            }
+            StmtRaw::SubqueryDecl(stmt) => Ok(Stmt::SubqueryDecl(stmt.up(helper)?)),
+            StmtRaw::WindowDecl(stmt) => Ok(Stmt::WindowDecl(Box::new(stmt.up(helper)?))),
             StmtRaw::ModuleStmt(ref m) => error_generic(m, m, &Self::BAD_MODULE, &helper.meta),
             StmtRaw::SubqueryStmt(ref sq) => error_generic(sq, sq, &Self::BAD_SUBQ, &helper.meta),
             StmtRaw::Expr(m) => error_generic(&*m, &*m, &Self::BAD_EXPR, &helper.meta),
@@ -255,6 +228,7 @@ impl<'script> Upable<'script> for OperatorDeclRaw<'script> {
         helper
             .operators
             .insert(operator_decl.fqon(&helper.module), operator_decl.clone());
+        helper.add_query_decl_doc(&operator_decl.id, self.doc);
         Ok(operator_decl)
     }
 }
@@ -311,9 +285,19 @@ impl<'script> Upable<'script> for SubqueryDeclRaw<'script> {
             into,
         };
         let subquery_name = subquery_decl.fqsqn(&helper.module);
+        if helper.subquery_defns.contains_key(&subquery_name) {
+            return error_generic(
+                &subquery_decl,
+                &subquery_decl,
+                &format! {"Can't define the query `{}` twice", subquery_name},
+                &helper.meta,
+            );
+        }
+
         helper
-            .subqueries
+            .subquery_defns
             .insert(subquery_name, subquery_decl.clone());
+        helper.add_query_decl_doc(&subquery_decl.id, self.doc);
         Ok(subquery_decl)
     }
 }
@@ -332,8 +316,7 @@ impl_expr!(SubqueryStmtRaw);
 
 impl<'script> SubqueryStmtRaw<'script> {
     fn mangle_id(&self, id: &str) -> String {
-        // TTODO Remove `A`
-        format! {"A__SUBQ__{}_{}",self.id, id}
+        format! {"__SUBQ__{}_{}",self.id, id}
     }
 
     fn get_args_map<'registry>(
@@ -341,8 +324,8 @@ impl<'script> SubqueryStmtRaw<'script> {
         decl_params: &Option<HashMap<String, Value<'script>>>,
         stmt_params: Option<HashMap<String, Value<'script>>>,
         helper: &Helper<'script, 'registry>,
-    ) -> Result<HashMap<String, Value<'script>>> {
-        match &decl_params {
+    ) -> Result<Value<'script>> {
+        let args = match &decl_params {
             // No params in the declaration
             None => Ok(HashMap::new()),
             Some(decl_params) => {
@@ -365,12 +348,13 @@ impl<'script> SubqueryStmtRaw<'script> {
                     }
                 }
             }
-        }
+        }?;
+        Ok(Value::from_iter(args))
     }
 
     fn eval_expr_with_args<'registry>(
         expr: &ImutExprInt<'script>,
-        args: HashMap<String, Value<'script>>,
+        args: &Value<'script>,
         helper: &Helper<'script, 'registry>,
     ) -> Result<Value<'script>> {
         const NO_AGGRS: [InvokeAggrFn<'static>; 0] = [];
@@ -378,17 +362,15 @@ impl<'script> SubqueryStmtRaw<'script> {
             aggr: AggrType::Emit,
             result_needed: true,
         };
-        let ctx = EventContext::new(nanotime(), None);
+        let ctx = EventContext::new(0, None);
         let event = Value::null();
         let state = Value::null();
         let meta = Value::null();
         let local = LocalStack::with_size(0);
 
-        let args = Value::from_iter(args);
-
         let consts = Consts::new();
         let run_consts = consts.run();
-        let run_consts = run_consts.with_new_args(&args);
+        let run_consts = run_consts.with_new_args(args);
 
         let env = Env {
             context: &ctx,
@@ -411,7 +393,7 @@ impl<'script> SubqueryStmtRaw<'script> {
 
     fn inline_params<'registry>(
         params: Params<'script>,
-        sq_args: &HashMap<String, Value<'script>>,
+        sq_args: &Value<'script>,
         helper: &mut Helper<'script, 'registry>,
     ) -> Result<HashMap<String, Value<'script>>> {
         match params {
@@ -421,8 +403,7 @@ impl<'script> SubqueryStmtRaw<'script> {
                 .into_iter()
                 .map(|(name, value_expr)| {
                     let value_expr = value_expr.up(helper)?;
-                    let value =
-                        SubqueryStmtRaw::eval_expr_with_args(&value_expr, sq_args.clone(), helper)?;
+                    let value = SubqueryStmtRaw::eval_expr_with_args(&value_expr, sq_args, helper)?;
                     Ok((name.to_string(), value))
                 })
                 .collect(),
@@ -431,7 +412,7 @@ impl<'script> SubqueryStmtRaw<'script> {
 
     fn inline_maybe_params<'registry>(
         params: MaybeParams<'script>,
-        sq_args: &HashMap<String, Value<'script>>,
+        sq_args: &Value<'script>,
         helper: &mut Helper<'script, 'registry>,
     ) -> Result<Option<HashMap<String, Value<'script>>>> {
         match params {
@@ -446,8 +427,8 @@ impl<'script> SubqueryStmtRaw<'script> {
     #[allow(clippy::too_many_lines)]
     pub fn inline<'registry>(
         self,
-        mut helper: &mut Helper<'script, 'registry>,
         mut query_stmts: &mut Vec<Stmt<'script>>,
+        mut helper: &mut Helper<'script, 'registry>,
     ) -> Result<SubqueryStmt> {
         // Calculate the fully qualified name for the subquery declaration.
         let fq_subquery_defn = if self.module.is_empty() {
@@ -457,17 +438,18 @@ impl<'script> SubqueryStmtRaw<'script> {
             format!("{}::{}", module.join("::"), self.target.clone())
         };
 
-        match helper.subqueries.get(&fq_subquery_defn) {
+        match helper.subquery_defns.get(&fq_subquery_defn) {
             None => error_generic(
                 &self,
                 &self,
-                &format!("subquery `{}` not found", fq_subquery_defn),
+                &format!("query `{}` not found", fq_subquery_defn),
                 &helper.meta,
             ),
             Some(subquery_decl) => {
                 let mut subquery_stmts = vec![];
 
                 let mut ports_set: HashSet<_> = HashSet::new();
+                // Map of subquery -> {ports->internal_stream}
                 let mut subquery_stream_map: HashMap<String, String> = HashMap::new();
 
                 let ports = subquery_decl.from.iter().chain(subquery_decl.into.iter());
@@ -508,7 +490,7 @@ impl<'script> SubqueryStmtRaw<'script> {
                                 id: subq_module.clone().into(),
                             };
                             s.module.push(subq_module);
-                            let s_up = s.inline(&mut helper, &mut query_stmts)?;
+                            let s_up = s.inline(&mut query_stmts, &mut helper)?;
                             query_stmts.push(Stmt::SubqueryStmt(s_up));
                         }
                         StmtRaw::Operator(mut o) => {
@@ -536,21 +518,57 @@ impl<'script> SubqueryStmtRaw<'script> {
                             query_stmts.push(Stmt::Script(s));
                         }
                         StmtRaw::Stream(mut s) => {
-                            let unmangled_id = &s.id.clone();
+                            let unmangled_id = s.id.clone();
                             s.id = self.mangle_id(&s.id);
                             let s = s.up(helper)?;
-                            if let Some(port_name) = ports_set.get(unmangled_id) {
+                            // Add the internal stream.id to the map of port->stream_id
+                            // if the stream.id matches a port_name.
+                            if let Some(port_name) = ports_set.get(&unmangled_id) {
                                 subquery_stream_map.insert(port_name.clone(), s.id.clone());
                             }
+
+                            // Use the unmangled name in the meta
+                            if let Some(meta) = helper.meta.nodes.get_mut(s.mid) {
+                                meta.name = Some(unmangled_id);
+                            }
+
                             query_stmts.push(Stmt::Stream(s));
                         }
                         StmtRaw::Select(mut s) => {
-                            // TTODO Inline args in where, having, groupby clauses
+                            let unmangled_from = s.from.0.id.to_string();
+                            let unmangled_into = s.into.0.id.to_string();
                             s.from.0.id = Cow::owned(self.mangle_id(&s.from.0.id.to_string()));
                             s.into.0.id = Cow::owned(self.mangle_id(&s.into.0.id.to_string()));
-                            // TTODO This leads to ugly error messages if stream is not defined.
-                            // `Stream used in `from` or `into` is not defined: A__SUBQ__custom_subquery_out`
-                            query_stmts.push(StmtRaw::Select(s).up(&mut helper)?);
+
+                            let mut select_up = StmtRaw::Select(s).up(&mut helper)?;
+
+                            if let Stmt::Select(s) = &mut select_up {
+                                // Inline the args in target, where, having and group-by clauses
+                                ArgsRewriter::new(subq_args.clone())
+                                    .rewrite_expr(&mut s.stmt.target.0)?;
+
+                                if let Some(expr) = &mut s.stmt.maybe_where {
+                                    ArgsRewriter::new(subq_args.clone())
+                                        .rewrite_expr(&mut expr.0)?;
+                                }
+                                if let Some(expr) = &mut s.stmt.maybe_having {
+                                    ArgsRewriter::new(subq_args.clone())
+                                        .rewrite_expr(&mut expr.0)?;
+                                }
+                                if let Some(group_by) = &mut s.stmt.maybe_group_by {
+                                    ArgsRewriter::new(subq_args.clone())
+                                        .rewrite_group_by(&mut group_by.0)?;
+                                }
+
+                                // Store the unmangled name in meta for error reports
+                                if let Some(meta) = helper.meta.nodes.get_mut(s.stmt.from.0.mid()) {
+                                    meta.name = Some(unmangled_from);
+                                }
+                                if let Some(meta) = helper.meta.nodes.get_mut(s.stmt.into.0.mid()) {
+                                    meta.name = Some(unmangled_into);
+                                }
+                            }
+                            query_stmts.push(select_up);
                         }
                         StmtRaw::ScriptDecl(mut s) => {
                             s.params = SubqueryStmtRaw::inline_maybe_params(
@@ -592,12 +610,14 @@ impl<'script> SubqueryStmtRaw<'script> {
                     }
                 }
                 helper.module.pop();
-                Ok(SubqueryStmt {
+
+                let subquery_stmt = SubqueryStmt {
                     mid: helper.add_meta_w_name(self.start, self.end, &self.id),
                     module: helper.module.clone(),
                     id: self.id,
                     port_stream_map: subquery_stream_map,
-                })
+                };
+                Ok(subquery_stmt)
             }
         }
     }
@@ -646,20 +666,16 @@ impl<'script> ModuleStmtRaw<'script> {
                     helper.module.push(self.name.to_string());
                 }
                 StmtRaw::WindowDecl(stmt) => {
-                    let w = stmt.up(&mut helper)?;
-                    helper.windows.insert(w.fqwn(&helper.module), w);
+                    stmt.up(&mut helper)?;
                 }
                 StmtRaw::ScriptDecl(stmt) => {
-                    let s = stmt.up(&mut helper)?;
-                    helper.scripts.insert(s.fqsn(&helper.module), s);
+                    stmt.up(&mut helper)?;
                 }
                 StmtRaw::OperatorDecl(stmt) => {
-                    let o = stmt.up(&mut helper)?;
-                    helper.operators.insert(o.fqon(&helper.module), o);
+                    stmt.up(&mut helper)?;
                 }
                 StmtRaw::SubqueryDecl(stmt) => {
-                    let s = stmt.up(helper)?;
-                    helper.subqueries.insert(s.fqsqn(&helper.module), s);
+                    stmt.up(helper)?;
                 }
                 ref e => {
                     return error_generic(e, e, &Self::BAD_STMT, &helper.meta);
@@ -732,6 +748,7 @@ impl<'script> Upable<'script> for ScriptDeclRaw<'script> {
         helper.module.pop();
         let script_name = script_decl.fqsn(&helper.module);
         helper.scripts.insert(script_name, script_decl.clone());
+        helper.add_query_decl_doc(&script_decl.id, self.doc);
         Ok(script_decl)
     }
 }
@@ -781,14 +798,20 @@ impl<'script> Upable<'script> for WindowDeclRaw<'script> {
         // warn params if `emit_empty_windows` is defined, but neither `max_groups` nor `evicition_period` is defined
         let params = up_params(self.params, helper)?;
 
-        Ok(WindowDecl {
+        let window_decl = WindowDecl {
             mid: helper.add_meta_w_name(self.start, self.end, &self.id),
             module: helper.module.clone(),
             id: self.id,
             kind: self.kind,
             params,
             script: maybe_script,
-        })
+        };
+
+        helper
+            .windows
+            .insert(window_decl.fqwn(&helper.module), window_decl.clone());
+        helper.add_query_decl_doc(&window_decl.id, self.doc);
+        Ok(window_decl)
     }
 }
 

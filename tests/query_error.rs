@@ -142,6 +142,13 @@ test_cases!(
     pp_embed_unrecognized_token4,
     pp_embed_unrecognized_token5,
     // INSERT
+    subquery_unknown_port,
+    subquery_duplicate_streams_inside,
+    subquery_select_bad_stream,
+    subquery_stream_port_conflict,
+    subquery_duplicate_define,
+    subquery_undefined,
+    subquery_unknown_param,
     duplicate_stream_name,
     window_both_settings,
     window_group_by_event_in_target,

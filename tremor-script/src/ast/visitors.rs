@@ -14,10 +14,10 @@
 
 use super::{
     base_expr::BaseExpr, eq::AstEq, ArrayPattern, ArrayPredicatePattern, BinExpr, Bytes,
-    ClauseGroup, Comprehension, EventPath, ExprPath, GroupBy, GroupByInt, ImutExprInt, Invoke,
-    InvokeAggr, List, Literal, LocalPath, Match, Merge, MetadataPath, NodeMetas, Patch,
+    ClauseGroup, Comprehension, EventPath, ExprPath, GroupBy, GroupByInt, ImutExpr, ImutExprInt,
+    Invoke, InvokeAggr, List, Literal, LocalPath, Match, Merge, MetadataPath, NodeMetas, Patch,
     PatchOperation, Path, Pattern, PredicateClause, PredicatePattern, Record, RecordPattern, Recur,
-    ReservedPath, Segment, StatePath, StrLitElement, StringLit, UnaryExpr,
+    ReservedPath, Segment, StatePath, StrLitElement, StringLit, UnaryExpr, Value,
 };
 use crate::errors::{error_event_ref_not_allowed, Result};
 /// Return value from visit methods for `ImutExprIntVisitor`
@@ -768,6 +768,55 @@ impl<'script> GroupByExprExtractor<'script> {
 impl<'script> GroupByVisitor<'script> for GroupByExprExtractor<'script> {
     fn visit_expr(&mut self, expr: &ImutExprInt<'script>) {
         self.expressions.push(expr.clone()); // take this, lifetimes (yes, i am stupid)
+    }
+}
+
+pub(crate) struct ArgsRewriter<'script> {
+    args: ImutExprInt<'script>,
+}
+
+impl<'script, 'meta> ArgsRewriter<'script> {
+    pub(crate) fn new(args: Value<'script>) -> Self {
+        let args: ImutExpr = Literal {
+            mid: 0,
+            value: args,
+        }
+        .into();
+        Self { args: args.0 }
+    }
+
+    pub(crate) fn rewrite_expr(&mut self, expr: &mut ImutExprInt<'script>) -> Result<()> {
+        self.walk_expr(expr)?;
+        Ok(())
+    }
+
+    pub(crate) fn rewrite_group_by(&mut self, group_by: &mut GroupByInt<'script>) -> Result<()> {
+        match group_by {
+            GroupByInt::Expr { expr, .. } | GroupByInt::Each { expr, .. } => {
+                self.rewrite_expr(expr)?;
+            }
+            GroupByInt::Set { items, .. } => {
+                for inner_group_by in items {
+                    self.rewrite_group_by(&mut inner_group_by.0)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<'script, 'meta> ImutExprIntVisitor<'script> for ArgsRewriter<'script> {
+    fn visit_path(&mut self, path: &mut Path<'script>) -> Result<VisitRes> {
+        if let Path::Reserved(args) = path {
+            let new = ExprPath {
+                expr: Box::new(self.args.clone()),
+                segments: args.segments().clone(),
+                mid: args.mid(),
+                var: 0,
+            };
+            *path = Path::Expr(new);
+        }
+        Ok(VisitRes::Walk)
     }
 }
 

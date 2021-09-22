@@ -129,6 +129,8 @@ test_cases!(
     pp_alias_operator,
     pp_config_directive,
     // INSERT
+    subquery_nested_subquery,
+    subquery_passthrough,
     alias_script_params_overwrite,
     cardinality,
     mod_def,
