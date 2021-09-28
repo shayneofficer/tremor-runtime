@@ -142,6 +142,9 @@ test_cases!(
     pp_embed_unrecognized_token4,
     pp_embed_unrecognized_token5,
     // INSERT
+    subquery_stream_name_conflict,
+    subquery_out,
+    subquery_in,
     module_in_name,
     duble_query,
     subq_name_overlap,
