@@ -142,6 +142,7 @@ test_cases!(
     pp_embed_unrecognized_token4,
     pp_embed_unrecognized_token5,
     // INSERT
+    module_in_name,
     duble_query,
     subq_name_overlap,
     non_const_in_args,

@@ -1,0 +1,7 @@
+mod snot with
+  define query badger
+  query
+    select event from in into out;
+  end;
+end;
+create query snot::badger;
