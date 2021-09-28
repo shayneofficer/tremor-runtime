@@ -129,6 +129,7 @@ test_cases!(
     pp_alias_operator,
     pp_config_directive,
     // INSERT
+    module_module_containment,
     module_in_subquery,
     subquery_nested_subquery,
     subquery_passthrough,
