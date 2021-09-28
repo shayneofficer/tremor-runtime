@@ -129,6 +129,8 @@ test_cases!(
     pp_alias_operator,
     pp_config_directive,
     // INSERT
+    args_nesting_no_leakage,
+    args_nesting_redefine,
     module_module_containment,
     module_in_subquery,
     subquery_nested_subquery,
