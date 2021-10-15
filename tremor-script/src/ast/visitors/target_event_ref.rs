@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use super::*;
-use crate::{ast::base_expr::BaseExpr, ast::eq::AstEq};
+use crate::{
+    ast::base_expr::BaseExpr,
+    ast::{eq::AstEq, walkers::ImutExprWalker},
+};
 
 /// analyze the select target expr if it references the event outside of an aggregate function
 /// rewrite what we can to group references
@@ -39,12 +42,13 @@ impl<'script, 'meta> TargetEventRef<'script, 'meta> {
     }
 
     pub(crate) fn rewrite_target(&mut self, target: &mut ImutExprInt<'script>) -> Result<bool> {
-        self.walk_iexpr(target)?;
+        self.walk_expr(target)?;
         Ok(self.rewritten)
     }
 }
-impl<'script, 'meta> ImutExprIntVisitor<'script> for TargetEventRef<'script, 'meta> {
-    fn visit_iexpr(&mut self, e: &mut ImutExprInt<'script>) -> Result<VisitRes> {
+impl<'script, 'meta> ImutExprWalker<'script> for TargetEventRef<'script, 'meta> {}
+impl<'script, 'meta> ImutExprVisitor<'script> for TargetEventRef<'script, 'meta> {
+    fn expr(&mut self, e: &mut ImutExprInt<'script>) -> Result<VisitRes> {
         for (idx, group_expr) in self.group_expressions.iter().enumerate() {
             // check if we have an equivalent expression :)
             if e.ast_eq(group_expr) {
@@ -60,7 +64,7 @@ impl<'script, 'meta> ImutExprIntVisitor<'script> for TargetEventRef<'script, 'me
         }
         Ok(VisitRes::Walk)
     }
-    fn visit_path(&mut self, path: &mut Path<'script>) -> Result<VisitRes> {
+    fn path(&mut self, path: &mut Path<'script>) -> Result<VisitRes> {
         match path {
             // these are the only exprs that can get a hold of the event payload or its metadata
             Path::Event(_) | Path::Meta(_) => {
